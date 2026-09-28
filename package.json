@@ -41,7 +41,7 @@
     "test:watch": "vitest",
     "contract": "node scripts/verify-contract.mjs",
     "scaffold": "node scripts/scaffold.mjs",
-    "verify": "npm run contract && npm run typecheck && npm run build && npm run test"
+    "verify": "npm run contract && npm run typecheck && npm run build && npm run test && npm run check:dist && npm run check:ghosts && npm run check:semver"
   },
   "dependencies": {
     "better-auth": "^1.7.5"
