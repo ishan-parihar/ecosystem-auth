@@ -12,6 +12,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # The @ishan/ecosystem-core peer is a REQUIRED devDependency declared as
+      # `file:../ecosystem-core`, so it must exist on disk BEFORE `npm ci` runs or
+      # the install fails on a clean runner. It is a separate repository, hence
+      # the explicit sibling checkout rather than a local path. No `ref:` is
+      # pinned: the suite should prove itself against core's current main, which
+      # is exactly what a local `file:` devDep resolves to for a developer.
+      - uses: actions/checkout@v4
+        with:
+          repository: ishan-parihar/ecosystem-core
+          path: core
+
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -21,10 +32,9 @@ jobs:
       # before the checks have had a say.
       - run: npm ci --ignore-scripts
 
-      # This package has no injection-contract script of its own, so the
-      # first gate is the adapter's config validation, which is what this
-      # package actually owns: rejecting a bad Better Auth config at
-      # construction rather than at request time.
+      # This package has no injection-contract script of its own, so the first
+      # gate is typecheck: the adapter's config validation and the SessionPorts
+      # conformance it imports from the core peer are what typecheck proves.
       - name: Typecheck
         run: npm run typecheck
 
@@ -34,7 +44,8 @@ jobs:
       # `dist/` is committed and shipped in `files`, so a consumer installs a
       # build rather than compiling. This is a content check after a real
       # build, never a filename comparison: a stale dist/ surfaces in a
-      # consumer as a runtime bug, not as a build error.
+      # consumer as a runtime bug, not as a build error. CI runs on a clean
+      # checkout, so index-vs-HEAD is the correct comparison here.
       - name: Committed dist must match a fresh build
         run: |
           if ! git diff --quiet -- dist; then
@@ -46,22 +57,31 @@ jobs:
       - name: Test
         run: npm run test
 
-      # Consumers import this by subpath. Prove both subpaths resolve from a
-      # real install before a tag, because a broken `prepare` or a wrong
-      # `exports` map breaks every consumer's build, not just this repo's.
+      # Consumers import this by subpath, and they always bring their own
+      # @ishan/ecosystem-core - it is a required, non-optional peer, because
+      # adapter.ts calls core's createSessionService at runtime. So the proof
+      # must be a surface WITH that peer present, or it proves the wrong thing.
+      # The peer is a different repository, checked out above as ./core; this
+      # repo's own workspace is ecosystem-auth, and installing that here would
+      # prove nothing about core resolution.
       - name: Prove the package installs and resolves as a real consumer
         run: |
           npm pack --pack-destination /tmp
           mkdir -p /tmp/consumer && cd /tmp/consumer
           npm init -y >/dev/null
+          # The required peer, from its own repo, then this package's tarball.
+          npm install --no-audit --no-fund "$GITHUB_WORKSPACE/core"
           npm install --no-audit --no-fund /tmp/ishan-ecosystem-auth-*.tgz
           node --input-type=module -e "
             import * as root from '@ishan/ecosystem-auth';
             import * as adapter from '@ishan/ecosystem-auth/adapter';
+            // The runtime value the adapter calls across the peer boundary.
+            const core = await import('@ishan/ecosystem-core/auth');
             if (typeof root.createAuthAdapter !== 'function')
               throw new Error('root export missing createAuthAdapter');
-            if (typeof adapter.createAuthAdapter !== 'function' &&
-                typeof adapter.createAuthAdapter !== 'undefined')
+            if (typeof adapter.createAuthAdapter !== 'function')
               throw new Error('adapter subpath unresolved');
-            console.log('both subpaths resolve');
+            if (typeof core.createSessionService !== 'function')
+              throw new Error('peer core missing createSessionService');
+            console.log('both subpaths resolve with the core peer present');
           "
