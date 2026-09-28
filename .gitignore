@@ -1,0 +1,13 @@
+# Deliberately NOT ignoring dist/.
+#
+# Consumers pin a tag archive URL, e.g.
+#   https://github.com/ishan-parihar/ecosystem-auth/archive/refs/tags/v0.1.0.tar.gz
+# That archive is the repository at that tag, so it only contains a usable
+# package if dist/ is committed. `prepare` rebuilds it locally, but a consumer
+# installing from the archive never runs a build. This mirrors
+# @ishan/ecosystem-core, which tracks dist/ for the same reason.
+
+node_modules
+*.tsbuildinfo
+*.tgz
+.DS_Store

@@ -1,0 +1,61 @@
+{
+	"name": "@ishan/ecosystem-auth",
+	"version": "0.1.0",
+	"description": "The optional identity sidecar for the Ishan Parihar ecosystem surfaces: a Better Auth instance built from an injected config, and an adapter that satisfies @ishan/ecosystem-core's SessionPorts port so role, tier and permission rules stay in the dependency-free core. Install-time opt-in - surfaces that do not need accounts never install it.",
+	"private": true,
+	"type": "module",
+	"license": "UNLICENSED",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/ishan-parihar/ecosystem-auth.git"
+	},
+	"engines": {
+		"node": ">=20"
+	},
+	"sideEffects": false,
+	"files": [
+		"dist",
+		"src",
+		"README.md",
+		"CHANGELOG.md"
+	],
+	"exports": {
+		".": {
+			"types": "./dist/index.d.ts",
+			"default": "./dist/index.js"
+		},
+		"./adapter": {
+			"types": "./dist/adapter.d.ts",
+			"default": "./dist/adapter.js"
+		},
+		"./package.json": "./package.json"
+	},
+	"types": "./dist/index.d.ts",
+	"scripts": {
+		"build": "tsc -p tsconfig.json",
+		"typecheck": "tsc -p tsconfig.json --noEmit",
+		"test": "vitest run",
+		"test:watch": "vitest",
+		"contract": "node scripts/verify-contract.mjs",
+		"scaffold": "node scripts/scaffold.mjs",
+		"verify": "npm run contract && npm run typecheck && npm run build && npm run test",
+		"prepare": "npm run build"
+	},
+	"dependencies": {
+		"better-auth": "^1.7.5"
+	},
+	"peerDependencies": {
+		"@ishan/ecosystem-core": ">=0.4.0"
+	},
+	"peerDependenciesMeta": {
+		"@ishan/ecosystem-core": {
+			"optional": true
+		}
+	},
+	"devDependencies": {
+		"@ishan/ecosystem-core": "file:../ecosystem-core",
+		"kysely": "^0.29.0",
+		"typescript": "^5.7.0",
+		"vitest": "^4.1.6"
+	}
+}
