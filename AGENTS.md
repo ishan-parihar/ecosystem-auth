@@ -85,6 +85,10 @@ npm run build       # tsc -p tsconfig.json (emits dist/)
 npm run test        # vitest run
 npm run scaffold -- --surface ../foo   # opt-in install (writes ONE seam file)
 npm run verify      # typecheck + build + test
+
+npm run check:ghosts    # no orphaned build output (scripts/check-dist-ghosts.mjs)
+npm run check:semver    # a breaking surface change needs the bump that declares it
+npm run check:dist      # index-relative dist gate, for a working repo
 ```
 
 A change is not done until `npm run verify` is green **and** the `dist/` gate passes. New
@@ -92,6 +96,15 @@ behaviour needs a test that can fail. The existing suite deliberately exercises
 `createAuthAdapter` with no reachable database (the `Could not validate the database
 schema` lines in test output are expected stderr from those cases, not failures) - a test
 that needs a live Postgres is a test that will not run in CI.
+
+The two `check:*` scripts are CI gates, and each was fault-injected before being
+wired in because each was a permanent green first. `check:semver` compares against
+`HEAD^` and needs real history, so CI checks out with `fetch-depth: 0`;
+`check:ghosts` exists because `tsc` does not clean `dist/` and the `dist/` gate
+cannot see an orphan. A check that cannot fail is not evidence: break it on purpose
+and confirm it goes red. `RELEASING.md` has the release sequence, including the peer
+rules - a core release that changes what this package imports requires a release
+here, and the `>=0.4.0` floor is evidence rather than caution.
 
 ## 6. Relationship to the core
 
