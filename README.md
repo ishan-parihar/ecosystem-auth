@@ -9,6 +9,37 @@ Status: **v0.1.0 — scaffolded and verified, not yet adopted by any surface.**
 Nothing consumes it in production. The first intended consumer is
 `technical-authority-website`, and only once a route actually needs accounts.
 
+## Installing it
+
+There is no npm release. The only consumption path is the Git repository, and
+the manifest says so: `"private": true` and `"license": "UNLICENSED"` mean this
+is **not** an npm package and the code is **all rights reserved**. It is a public
+repository, not a public-domain one. A consumer within the ecosystem installs it
+by tag:
+
+```jsonc
+"@ishan/ecosystem-auth": "https://github.com/ishan-parihar/ecosystem-auth/archive/refs/tags/v0.1.0.tar.gz",
+"@ishan/ecosystem-core": "https://github.com/ishan-parihar/ecosystem-core/archive/refs/tags/v0.5.0.tar.gz"
+```
+
+Use the **tag archive URL**, not the `github:owner/repo#tag` shorthand. npm
+rewrites every GitHub git specifier to `git+ssh`, which resolves on a developer
+machine with an SSH key and fails on a CI runner without one. The archive URL is
+plain HTTPS over a public repository: no credentials, no SSH key, no git at all.
+
+core is a **required, non-optional peer**: npm does not install peers, which is
+what guarantees a surface can never end up with two physical copies of it.
+
+Pin a tag. `#main` resolves, but it is a moving ref, and a surface pinned to it
+breaks whenever this package is edited.
+
+There is deliberately no `prepare` script. `dist/` is committed and shipped, so
+a consumer installs JavaScript and type declarations directly and needs neither
+TypeScript nor a build step. That matters here specifically: npm runs a git
+dependency's `prepare` in a checkout where **peer dependencies are absent**, so a
+build there cannot resolve core — which is why this package has no `prepare` at
+all, and why the CI gate installs a real git-spec consumer to prove it.
+
 ## Why this is a separate package
 
 `@ishan/ecosystem-core` has a binding contract: no `$env`, no `node:*`, no
