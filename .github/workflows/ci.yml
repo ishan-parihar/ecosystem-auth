@@ -17,12 +17,15 @@ jobs:
           node-version: 22
           cache: npm
 
-      # `--ignore-scripts` so the package's own `prepare` build cannot run
-      # before the checks have had a say. The core devDependency is a git spec
-      # pinned to the v0.5.0 tag, so this needs no sibling checkout: a clean
-      # runner resolves it over HTTPS exactly as a developer does. Core commits
-      # its dist/, so a git install is a real install, not a source tree that
-      # would have to be built first.
+      # The core devDependency is a git spec pinned to a release tag, so this
+      # needs no sibling checkout: a clean runner resolves it over HTTPS exactly
+      # as a developer does. Core commits its dist/, so a git install is a real
+      # install, not a source tree that would have to be built first.
+      #
+      # `--ignore-scripts` because this package has no `prepare` (dist/ is
+      # committed and shipped, so a consumer never needs a build) and the point
+      # of the gate is to run the checks explicitly, not to have an install
+      # lifecycle script do work behind them.
       - run: npm ci --ignore-scripts
 
       # This package has no injection-contract script of its own, so the first
@@ -39,6 +42,10 @@ jobs:
       # build, never a filename comparison: a stale dist/ surfaces in a
       # consumer as a runtime bug, not as a build error. CI runs on a clean
       # checkout, so index-vs-HEAD is the correct comparison here.
+      #
+      # In a working repo use the index-relative form instead
+      # (`npm run build && git add -A dist && git diff --quiet -- dist`), or a
+      # correct uncommitted rebuild reads as a phantom failure.
       - name: Committed dist must match a fresh build
         run: |
           if ! git diff --quiet -- dist; then
@@ -47,33 +54,78 @@ jobs:
             exit 1
           fi
 
+      # A removal or a rename of a published subpath is a legal edit to
+      # package.json, so nothing else objects to it. This makes the version an
+      # enforced claim. There is no prior release to compare against yet, so on
+      # this run it reports that and passes; from v0.1.0 onward it has a
+      # failure mode. Fault-injected in ecosystem-core before being ported.
+      - name: Breaking surface change requires a version bump
+        run: npm run check:semver
+
       - name: Test
         run: npm run test
 
-      # Consumers import this by subpath, and they always bring their own
-      # @ishan/ecosystem-core - it is a required, non-optional peer, because
-      # adapter.ts calls core's createSessionService at runtime. So the proof
-      # must be a surface WITH that peer present, or it proves the wrong thing.
-      # The devDependency already resolved a real core, so it is installed here
-      # from the same pinned tag rather than from a local path.
-      - name: Prove the package installs and resolves as a real consumer
+      # Two consumer proofs, because they exercise different machinery.
+      #
+      # The tarball is what `npm pack` produces: it proves the published shape
+      # (files, exports map, the committed dist) is installable.
+      #
+      # The git spec is what a surface actually types today, and it is the one
+      # that runs lifecycle scripts - npm runs `prepare` for a git dependency in
+      # a checkout where PEER dependencies are not installed. A `prepare` that
+      # ran `tsc` therefore failed with TS2307 on every install from GitHub
+      # while this package's own CI stayed green, because `npm ci` here never
+      # took that path. That failure shipped to a public repo before this check
+      # existed; keep it, and keep it pointed at the same ref a consumer uses.
+      - name: Prove both install paths resolve as a real consumer
         run: |
+          # One declaration, read rather than repeated: the tag lives in
+          # package.json, so a core release does not require editing this file.
+          CORE_SPEC="$(node -p "require('./package.json').devDependencies['@ishan/ecosystem-core']")"
+          echo "core devDependency: $CORE_SPEC"
+          AUTH_SHA="$(git rev-parse HEAD)"
           npm pack --pack-destination /tmp
-          mkdir -p /tmp/consumer && cd /tmp/consumer
+
+          # 1. the packed tarball
+          rm -rf /tmp/consumer-tgz && mkdir -p /tmp/consumer-tgz && cd /tmp/consumer-tgz
           npm init -y >/dev/null
-          # The required peer, pinned to the same tag, then this package.
-          npm install --no-audit --no-fund "github:ishan-parihar/ecosystem-core#v0.5.0"
+          npm install --no-audit --no-fund "$CORE_SPEC"
           npm install --no-audit --no-fund /tmp/ishan-ecosystem-auth-*.tgz
           node --input-type=module -e "
-            import * as root from '@ishan/ecosystem-auth';
-            import * as adapter from '@ishan/ecosystem-auth/adapter';
-            // The runtime value the adapter calls across the peer boundary.
+            const check = async () => {
+              const root = await import('@ishan/ecosystem-auth');
+              const adapter = await import('@ishan/ecosystem-auth/adapter');
+              const core = await import('@ishan/ecosystem-core/auth');
+              for (const [label, m, name] of [
+                ['auth root', root, 'createAuthAdapter'],
+                ['auth adapter subpath', adapter, 'createAuthAdapter'],
+                ['peer core', core, 'createSessionService'],
+              ]) {
+                if (typeof m[name] !== 'function') throw new Error(label + ' missing ' + name);
+              }
+            };
+            await check();
+            console.log('  tarball consumer: OK');
+          "
+
+          # 2. the git spec, the path a surface uses today. `--foreground-scripts`
+          #    so a prepare/preinstall failure surfaces here rather than being
+          #    buried in an install log.
+          cd "$GITHUB_WORKSPACE"
+          rm -rf /tmp/consumer-git && mkdir -p /tmp/consumer-git && cd /tmp/consumer-git
+          npm init -y >/dev/null
+          npm install --no-audit --no-fund --foreground-scripts "$CORE_SPEC"
+          npm install --no-audit --no-fund --foreground-scripts "github:ishan-parihar/ecosystem-auth#$AUTH_SHA"
+          node --input-type=module -e "
+            const root = await import('@ishan/ecosystem-auth');
+            const adapter = await import('@ishan/ecosystem-auth/adapter');
             const core = await import('@ishan/ecosystem-core/auth');
-            if (typeof root.createAuthAdapter !== 'function')
-              throw new Error('root export missing createAuthAdapter');
-            if (typeof adapter.createAuthAdapter !== 'function')
-              throw new Error('adapter subpath unresolved');
-            if (typeof core.createSessionService !== 'function')
-              throw new Error('peer core missing createSessionService');
-            console.log('both subpaths resolve with the core peer present');
+            for (const [label, m, name] of [
+              ['auth root', root, 'createAuthAdapter'],
+              ['auth adapter subpath', adapter, 'createAuthAdapter'],
+              ['peer core', core, 'createSessionService'],
+            ]) {
+              if (typeof m[name] !== 'function') throw new Error(label + ' missing ' + name);
+            }
+            console.log('  git-spec consumer: OK');
           "
