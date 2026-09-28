@@ -5,6 +5,15 @@ on:
     tags: ['v*']
   pull_request:
     branches: [main]
+  # A stale dist/ or a removed subpath can only arrive with a change to
+  # the source or the manifest. Scoped as its OWN trigger rather than a
+  # `paths:` filter on push: a paths filter there would also stop the
+  # gates running for a push that touches only a workflow file, which is
+  # exactly the push that changes a gate.
+  workflow_dispatch:
+  # A stale dist/ or a removed subpath can only arrive with a change to the
+  # source or the manifest, so run on those paths as well as on every push.
+  # Without this the gate exists but only fires when something else forces a run.
 
 jobs:
   verify:
@@ -61,11 +70,19 @@ jobs:
 
       # A removal or a rename of a published subpath is a legal edit to
       # package.json, so nothing else objects to it. This makes the version an
-      # enforced claim. There is no prior release to compare against yet, so on
-      # this run it reports that and passes; from v0.1.0 onward it has a
-      # failure mode. Fault-injected in ecosystem-core before being ported.
+      # enforced claim. Fault-injected in ecosystem-core before being ported,
+      # then fault-injected again here: a clean tree passes, a removed subpath
+      # fails, a renamed root export fails, a removal paired with the bump
+      # that declares it passes, and an additive subpath passes.
       - name: Breaking surface change requires a version bump
         run: npm run check:semver
+
+      # tsc does not clean dist/, so removing a module leaves its compiled
+      # output committed and shipped to every consumer, and nothing else in the
+      # pipeline would notice: the dist gate only compares a fresh build
+      # against what is committed, and a ghost is present in both.
+      - name: No orphaned build output
+        run: npm run check:ghosts
 
       - name: Test
         run: npm run test
@@ -75,52 +92,36 @@ jobs:
       # The tarball is what `npm pack` produces: it proves the published shape
       # (files, exports map, the committed dist) is installable.
       #
-      # The git spec is what a surface actually types today, and it is the one
-      # that runs lifecycle scripts - npm runs `prepare` for a git dependency in
-      # a checkout where PEER dependencies are not installed. A `prepare` that
-      # ran `tsc` therefore failed with TS2307 on every install from GitHub
-      # while this package's own CI stayed green, because `npm ci` here never
-      # took that path. That failure shipped to a public repo before this check
-      # existed; keep it, and keep it pointed at the same ref a consumer uses.
+      # The archive URL is what a surface actually types today, and it is the
+      # same ref a git dependency would be, but over plain HTTPS. The
+      # `github:owner/repo#tag` shorthand is deliberately NOT used: npm rewrites
+      # every GitHub git specifier to git+ssh, which resolves on a developer
+      # machine with an SSH key and fails on a runner without one. That is the
+      # reason documented in ecosystem-core's README, and the reason this step
+      # uses the archive form.
+      #
+      # It is also the only proof that would have caught the `prepare` bug: npm
+      # runs a git dependency's lifecycle scripts in a checkout where PEER
+      # dependencies are not installed, so a `prepare` running tsc failed with
+      # TS2307 on every install from GitHub while this package's own CI stayed
+      # green, because `npm ci` never took that path. That shipped to a public
+      # repo before this check existed.
       - name: Prove both install paths resolve as a real consumer
         run: |
           # One declaration, read rather than repeated: the tag lives in
           # package.json, so a core release does not require editing this file.
-          CORE_SPEC="$(node -p "require('./package.json').devDependencies['@ishan/ecosystem-core']")"
-          echo "core devDependency: $CORE_SPEC"
-          AUTH_SHA="$(git rev-parse HEAD)"
+          # Read from the REPO path - this step has already cd'd out of it.
+          CORE_TAG="$(node -p "require('$GITHUB_WORKSPACE/package.json').devDependencies['@ishan/ecosystem-core'].split('#')[1]")"
+          echo "core devDependency tag: $CORE_TAG"
+          test -n "$CORE_TAG" || { echo "::error::cannot read the core tag from package.json"; exit 1; }
+          SHA="$(git -C "$GITHUB_WORKSPACE" rev-parse HEAD)"
           npm pack --pack-destination /tmp
 
           # 1. the packed tarball
           rm -rf /tmp/consumer-tgz && mkdir -p /tmp/consumer-tgz && cd /tmp/consumer-tgz
           npm init -y >/dev/null
-          npm install --no-audit --no-fund "$CORE_SPEC"
+          npm install --no-audit --no-fund "https://github.com/ishan-parihar/ecosystem-core/archive/refs/tags/$CORE_TAG.tar.gz"
           npm install --no-audit --no-fund /tmp/ishan-ecosystem-auth-*.tgz
-          node --input-type=module -e "
-            const check = async () => {
-              const root = await import('@ishan/ecosystem-auth');
-              const adapter = await import('@ishan/ecosystem-auth/adapter');
-              const core = await import('@ishan/ecosystem-core/auth');
-              for (const [label, m, name] of [
-                ['auth root', root, 'createAuthAdapter'],
-                ['auth adapter subpath', adapter, 'createAuthAdapter'],
-                ['peer core', core, 'createSessionService'],
-              ]) {
-                if (typeof m[name] !== 'function') throw new Error(label + ' missing ' + name);
-              }
-            };
-            await check();
-            console.log('  tarball consumer: OK');
-          "
-
-          # 2. the git spec, the path a surface uses today. `--foreground-scripts`
-          #    so a prepare/preinstall failure surfaces here rather than being
-          #    buried in an install log.
-          cd "$GITHUB_WORKSPACE"
-          rm -rf /tmp/consumer-git && mkdir -p /tmp/consumer-git && cd /tmp/consumer-git
-          npm init -y >/dev/null
-          npm install --no-audit --no-fund --foreground-scripts "$CORE_SPEC"
-          npm install --no-audit --no-fund --foreground-scripts "github:ishan-parihar/ecosystem-auth#$AUTH_SHA"
           node --input-type=module -e "
             const root = await import('@ishan/ecosystem-auth');
             const adapter = await import('@ishan/ecosystem-auth/adapter');
@@ -132,5 +133,27 @@ jobs:
             ]) {
               if (typeof m[name] !== 'function') throw new Error(label + ' missing ' + name);
             }
-            console.log('  git-spec consumer: OK');
+            console.log('  tarball consumer: OK');
+          "
+
+          # 2. the archive URL a surface types, over HTTPS with no git and no
+          #    SSH key. `--foreground-scripts` so a lifecycle-script failure
+          #    surfaces here rather than buried in an install log.
+          cd "$GITHUB_WORKSPACE"
+          rm -rf /tmp/consumer-git && mkdir -p /tmp/consumer-git && cd /tmp/consumer-git
+          npm init -y >/dev/null
+          npm install --no-audit --no-fund --foreground-scripts "https://github.com/ishan-parihar/ecosystem-core/archive/refs/tags/$CORE_TAG.tar.gz"
+          npm install --no-audit --no-fund --foreground-scripts "https://github.com/ishan-parihar/ecosystem-auth/archive/$SHA.tar.gz"
+          node --input-type=module -e "
+            const root = await import('@ishan/ecosystem-auth');
+            const adapter = await import('@ishan/ecosystem-auth/adapter');
+            const core = await import('@ishan/ecosystem-core/auth');
+            for (const [label, m, name] of [
+              ['auth root', root, 'createAuthAdapter'],
+              ['auth adapter subpath', adapter, 'createAuthAdapter'],
+              ['peer core', core, 'createSessionService'],
+            ]) {
+              if (typeof m[name] !== 'function') throw new Error(label + ' missing ' + name);
+            }
+            console.log('  archive-URL consumer: OK');
           "
