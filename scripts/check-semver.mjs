@@ -105,12 +105,23 @@ function rootValueExportsAt(ref) {
   }
 }
 
-// Compare against the previous RELEASE, not the most recent tag on HEAD.
-// `git describe --tags --abbrev=0` returns v0.5.0 when HEAD is tagged v0.5.0,
-// so the "diff" is a tag against itself: empty, and the gate reported "no
-// breaking change" for a commit that had in fact removed a subpath. That is the
-// vacuous-pass shape - a check that cannot fail. So when HEAD is itself tagged,
-// compare its PARENT, which is the state a consumer on that tag does not have.
+// Compare against the state a consumer on the previous release does NOT have.
+//
+// `git describe --tags --abbrev=0` is wrong here: when HEAD is itself tagged it
+// returns that same tag, so the comparison is a tag against itself - empty, and
+// the gate reported "no breaking change" for a commit that had in fact removed
+// a subpath. That is the vacuous-pass shape this gate exists to prevent.
+//
+// So when HEAD is tagged, the base is HEAD^: the commit just before the release.
+// It is deliberately NOT resolved through `describe`, because on a first tagged
+// release the parent predates every tag and `git describe HEAD^` fails outright
+// - which previously sent this gate down its "no prior release" path and left it
+// a permanent, silent pass.
+//
+// The base is therefore a COMMIT ref, which works for a tag or a commit, and
+// the base version is read from package.json at that ref rather than parsed out
+// of a ref name. On a first release that ref is not a tag and has no version in
+// its name at all.
 const headIsTagged = (() => {
   try {
     return git('tag', '--points-at', 'HEAD').split('\n').filter(Boolean).length > 0;
@@ -119,32 +130,44 @@ const headIsTagged = (() => {
   }
 })();
 
-const base = process.argv[2] || (() => {
+const base = process.argv[2] || (headIsTagged ? 'HEAD^' : (() => {
   try {
-    if (headIsTagged) {
-      // The tagged commit is the release; the prior tag is what it replaced.
-      const prior = git('describe', '--tags', '--abbrev=0', 'HEAD^');
-      return prior;
-    }
     return git('describe', '--tags', '--abbrev=0');
+  } catch {
+    // No tag reachable: compare against the previous commit, which is still a
+    // real comparison rather than none.
+    return 'HEAD^';
+  }
+})());
+
+/**
+ * The version declared at a ref, so the bump is measured against the state
+ * actually being compared against. The base is a COMMIT on a first tagged
+ * release, not a tag, so its name cannot be parsed as a version.
+ */
+function versionAt(ref) {
+  try {
+    return JSON.parse(git('show', `${ref}:package.json`)).version;
   } catch {
     return null;
   }
-})();
-
-if (!base) {
-  console.log('  semver: no prior release to compare against (first release) - nothing to enforce');
-  process.exit(0);
 }
 
-const [baseMajor, baseMinor] = base.replace(/^v/, '').split('.').map(Number);
+const baseVersion = versionAt(base);
+if (!baseVersion) {
+  // An unresolvable base is NOT a pass. Reporting "no breaking change" for a
+  // comparison that never happened is the vacuous-pass shape this gate exists
+  // to prevent, so fail loudly instead.
+  fail(`cannot read package.json at base ref "${base}" - nothing was compared`);
+}
+const [baseMajor, baseMinor] = baseVersion.split('.').map(Number);
 const [curMajor, curMinor] = current.split('.').map(Number);
 const bump = curMajor > baseMajor ? 'major' : curMinor > baseMinor ? 'minor' : 'patch';
 // At 0.x the minor IS the breaking boundary npm enforces.
 const breakingBumps = curMajor > 0 ? ['major'] : ['major', 'minor'];
 const breakingIsDeclared = breakingBumps.includes(bump);
 
-console.log(`  semver: ${base} -> v${current}  (${bump} bump)`);
+console.log(`  semver: v${baseVersion} (${base}) -> v${current}  (${bump} bump)`);
 
 const prevExports = exportsAt(base);
 const nowExports = exportsNow();
@@ -176,7 +199,7 @@ if (!breakingIsDeclared) {
     `v${current} is a ${bump} bump, which declares no breaking change. ` +
       `At ${curMajor === 0 ? '0.x' : 'major >= 1'} a removal requires ` +
       `${breakingBumps.join(' or ')}. Either bump the version or restore the ` +
-      `exports. A consumer pinned to ${base} will break at their upgrade, and ` +
+      `exports. A consumer pinned to ${baseVersion} will break at their upgrade, and ` +
       `nothing else tells them.`,
   );
 }
