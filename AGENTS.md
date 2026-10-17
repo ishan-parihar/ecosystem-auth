@@ -20,7 +20,7 @@ dependency-free core. It is the one package in the ecosystem that *is* allowed t
   and SvelteKit resolve imports at build time - a surface that "disabled" auth at runtime
   would still carry the dependency in its bundle. So the choice is made by whether the
   package is installed, and `scripts/scaffold.mjs` writes the single seam file
-  (`src/lib/server/auth-provider.ts`) that imports it.
+  that imports it.
 
 ## 2. The config-validation contract (this package's real invariant)
 
