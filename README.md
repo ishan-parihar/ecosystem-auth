@@ -14,7 +14,8 @@ There is no npm release. The only consumption path is the Git repository, and th
 by tag:
 
 ```jsonc
-"@ishan/ecosystem-auth": "https://github.com/ishan-parihar/ecosystem-auth/archive/refs/tags/v0.1.0.tar.gz", "@ishan/ecosystem-core": "https://github.com/ishan-parihar/ecosystem-core/archive/refs/tags/v0.5.0.tar.gz"
+"@ishan/ecosystem-auth": "https://github.com/ishan-parihar/ecosystem-auth/archive/refs/tags/v0.1.0.tar.gz",
+"@ishan/ecosystem-core": "https://github.com/ishan-parihar/ecosystem-core/archive/refs/tags/v0.5.0.tar.gz"
 ```
 
 Use the **tag archive URL**, not the `github:owner/repo#tag` shorthand. npm rewrites every GitHub git specifier to `git+ssh`, which resolves on a developer machine with an SSH key and fails on a CI runner without one. The archive URL is plain HTTPS over a public repository: no credentials, no SSH key, no git at all.
@@ -47,7 +48,8 @@ A runtime flag cannot keep a dependency out. If any reachable code path imports 
 The actual opt-in is therefore a **generated file**:
 
 ```bash
-node scripts/scaffold.mjs --surface ../technical-authority-website --dry-run node scripts/scaffold.mjs --surface ../technical-authority-website
+node scripts/scaffold.mjs --surface ../technical-authority-website --dry-run
+node scripts/scaffold.mjs --surface ../technical-authority-website
 ```
 
 That writes exactly one file into the surface, `src/lib/server/auth-provider.ts`, which is the only thing that imports this package. Deleting it is the whole opt-out. Swapping identity providers later means swapping that one file.
@@ -57,13 +59,28 @@ Options: `--schema <name>` (default `auth`), `--driver <pg|postgres>` (default `
 ## Usage
 
 ```ts
-import { createAuthAdapter } from '@ishan/ecosystem-auth'; const adapter = createAuthAdapter({ database: { dialect: new PostgresDialect({
-      pool: new Pool({ connectionString: env.HYPERDRIVE.connectionString, max: 1 }), }), type: 'postgres', schemaName: 'auth',
-  }, secret: env.BETTER_AUTH_SECRET, baseURL: 'https://example.com', });
+import { createAuthAdapter } from '@ishan/ecosystem-auth';
+
+const adapter = createAuthAdapter({
+  database: {
+    dialect: new PostgresDialect({
+      pool: new Pool({ connectionString: env.HYPERDRIVE.connectionString, max: 1 }),
+    }),
+    type: 'postgres',
+    schemaName: 'auth',
+  },
+  secret: env.BETTER_AUTH_SECRET,
+  baseURL: 'https://example.com',
+});
 
 // Satisfies core's port. Role/tier rules stay in the core.
-const session = adapter.createSessionService({ headers: event.request.headers, loadProfile: (id) => postgrest.selectOne('profiles', { id }), premiumTiers: ['sovereign'],
-}); const user = await session.requireUser();
+const session = adapter.createSessionService({
+  headers: event.request.headers,
+  loadProfile: (id) => postgrest.selectOne('profiles', { id }),
+  premiumTiers: ['sovereign'],
+});
+
+const user = await session.requireUser();
 ```
 
 `createSessionService` and `createSessionPorts` take an optional preloaded `session`, so a request that already resolved one does not pay for a second validation — core's port contract explicitly warns against that.
@@ -123,6 +140,10 @@ those features carry invalidation semantics this package would only reimplement 
 ## Commands
 
 ```bash
-npm run contract    # enforce the injection contract npm run typecheck   # tsc --noEmit npm test            # vitest npm run build       # tsc → dist/
-npm run verify      # all of the above npm run scaffold -- --surface ../some-site --dry-run
+npm run contract    # enforce the injection contract
+npm run typecheck   # tsc --noEmit
+npm test            # vitest
+npm run build       # tsc → dist/
+npm run verify      # all of the above
+npm run scaffold -- --surface ../some-site --dry-run
 ```
