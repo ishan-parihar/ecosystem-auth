@@ -102,7 +102,7 @@ wired in because each was a permanent green first. `check:semver` compares again
 `HEAD^` and needs real history, so CI checks out with `fetch-depth: 0`;
 `check:ghosts` exists because `tsc` does not clean `dist/` and the `dist/` gate
 cannot see an orphan. A check that cannot fail is not evidence: break it on purpose
-and confirm it goes red. `RELEASING.md` has the release sequence, including the peer
+and confirm it goes red. `docs/plans/2026-09-29-RELEASING.md` has the release sequence, including the peer
 rules - a core release that changes what this package imports requires a release
 here, and the `>=0.4.0` floor is evidence rather than caution.
 
