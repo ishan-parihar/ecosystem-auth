@@ -16,3 +16,8 @@ node_modules
 *.tsbuildinfo
 *.tgz
 .DS_Store
+
+# genome runtime state (locks, temp files, recon tokens, read marks)
+*.genome-lock
+*.genome-tmp
+.genome/
